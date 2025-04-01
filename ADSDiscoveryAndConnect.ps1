@@ -60,9 +60,6 @@ function Assert-ModuleInstalled {
             exit 1
         }
     }
-    else {
-        Write-Host "Module '$ModuleName' is already installed."
-    }
 }
 
 # Ensure the required module TcXaeMgmt is installed.
