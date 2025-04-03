@@ -16,7 +16,6 @@ if ($PSVersionTable.PSVersion.Major -lt 7) {
     else {
         Write-Host "Winget is not available. Opening the PowerShell 7 download page..."
         Start-Process "https://github.com/PowerShell/PowerShell/releases"
-
         Write-Host "Here is version 7.5.0"
         Start-Process "https://github.com/PowerShell/PowerShell/releases/tag/v7.5.0"
     }
@@ -123,19 +122,30 @@ try {
         if ($selectedRoute.RTSystem -like "Win*") {
             $deviceManagerURL = "https://$($selectedRoute.Address)/config"
             $defaultAction = "RDP"
-        } elseif ($selectedRoute.RTSystem -like "TcBSD*") {
+        }
+        elseif ($selectedRoute.RTSystem -like "TcBSD*") {
             $deviceManagerURL = "https://$($selectedRoute.Address)"
             $defaultAction = "SSH"
-        } else {
+        }
+        else {
             Write-Output "Unsupported operating system type for remote connection: $($selectedRoute.RTSystem)"
             exit 1
         }
 
-        # Ask user for connection type.
-        Write-Output "Connection options for target '$($selectedRoute.Name)':"
-        Write-Output "   1) Open Beckhoff Device Manager webpage ($deviceManagerURL)"
-        Write-Output "   2) Start default remote connection ($defaultAction)"
-        $connectionChoice = Read-Host "Enter 1 or 2"
+        # Offer different choices based on OS.
+        if ($selectedRoute.RTSystem -like "TcBSD*") {
+            Write-Output "Connection options for target '$($selectedRoute.Name)':"
+            Write-Output "   1) Open Beckhoff Device Manager webpage ($deviceManagerURL)"
+            Write-Output "   2) Start SSH session"
+            Write-Output "   3) Open WinSCP connection as Administrator with root privileges"
+            $connectionChoice = Read-Host "Enter 1, 2, or 3"
+        }
+        else {
+            Write-Output "Connection options for target '$($selectedRoute.Name)':"
+            Write-Output "   1) Open Beckhoff Device Manager webpage ($deviceManagerURL)"
+            Write-Output "   2) Start Remote Desktop session ($defaultAction)"
+            $connectionChoice = Read-Host "Enter 1 or 2"
+        }
 
         if ($connectionChoice -eq "1") {
             Write-Output "Opening Beckhoff Device Manager webpage at $deviceManagerURL ..."
@@ -143,26 +153,31 @@ try {
         }
         elseif ($connectionChoice -eq "2") {
             if ($selectedRoute.RTSystem -like "Win*") {
-                # If target is Windows, use Remote Desktop.
                 $cmdkeyCommand = "cmdkey /generic:TERMSRV/$($selectedRoute.Address) /user:Administrator /pass:1"
-                Invoke-Expression $cmdkeyCommand > $null
-
+                Invoke-Expression $cmdkeyCommand | Out-Null
                 $remoteDesktopCommand = "mstsc /v:$($selectedRoute.Address)"
                 Write-Output "Starting Remote Desktop session..."
                 Invoke-Expression $remoteDesktopCommand
-            } elseif ($selectedRoute.RTSystem -like "TcBSD*") {
-                # If target is Tc/BSD, use SSH.
+            }
+            elseif ($selectedRoute.RTSystem -like "TcBSD*") {
                 $sshCommand = "ssh Administrator@$($selectedRoute.Address)"
                 Write-Output "Starting SSH session..."
                 Invoke-Expression $sshCommand
             }
         }
+        elseif ($connectionChoice -eq "3" -and $selectedRoute.RTSystem -like "TcBSD*") {
+            # For Tc/BSD: Open WinSCP with Administrator:1 and raw settings.
+            $winscpExePath = "C:\Program Files (x86)\WinSCP\WinSCP.exe"
+            $target = $selectedRoute.Address
+            Write-Output "Opening WinSCP with Administrator password '1' and root privileges..."
+            & $winscpExePath "sftp://Administrator:1@$target/" "/rawsettings" "SftpServer=doas /usr/libexec/sftp-server"
+        }
         else {
-            Write-Output "Invalid selection. Please choose either 1 or 2."
+            Write-Output "Invalid selection. Please choose a valid option."
             Read-Host "Press Enter to exit"
         }
-
-    } else {
+    }
+    else {
         Write-Output "Invalid selection. Please select a number from 1 to $($remoteRoutes.Count) and run the script again."
         Read-Host "Press Enter to exit"
     }
