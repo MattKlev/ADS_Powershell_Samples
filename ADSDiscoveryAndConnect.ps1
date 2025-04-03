@@ -3,11 +3,12 @@ function Read-InputWithTimeout {
     param(
         [int]$TimeoutSeconds = 10
     )
+    
     $endTime = (Get-Date).AddSeconds($TimeoutSeconds)
     $inputString = ""
     while ((Get-Date) -lt $endTime) {
         if ([Console]::KeyAvailable) {
-            $key = [Console]::ReadKey($true)
+            $key = [Console]::ReadKey($false)
             if ($key.Key -eq "Enter") { break }
             $inputString += $key.KeyChar
         }
@@ -161,7 +162,8 @@ do {
             Write-Host "   1) Open Beckhoff Device Manager webpage ($deviceManagerURL)"
             Write-Host "   2) Start SSH session"
             Write-Host "   3) Open WinSCP connection as Administrator with root privileges"
-            $connectionChoice = Read-Host "Enter 1, 2, or 3"
+            Write-Host "   4) Open both SSH session and WinSCP"
+            $connectionChoice = Read-Host "Enter 1, 2, 3, or 4"
         }
         else {
             Write-Host "Connection options for target '$($selectedRoute.Name)':" -ForegroundColor Cyan
@@ -197,9 +199,26 @@ do {
                     }
                 }
             }
+            "4" {
+                if ($selectedRoute.RTSystem -like "TcBSD*") {
+                    # Open SSH session
+                    Start-Process -FilePath "powershell.exe" -ArgumentList "-NoExit", "-Command", "ssh Administrator@$($selectedRoute.Address)"
+                    # Open WinSCP connection
+                    $winscpExePath = "C:\Program Files (x86)\WinSCP\WinSCP.exe"
+                    $target = $selectedRoute.Address
+                    try {
+                       & $winscpExePath "sftp://Administrator:1@$target/" "/rawsettings" "SftpServer=doas /usr/libexec/sftp-server"
+                    }
+                    catch {
+                        Start-Process "https://winscp.net/eng/download.php"
+                    }
+                }
+            }
             default { }
         }
-        # After executing a command, immediately loop back (the table remains visible until new results appear).
+        # Clear the screen and re-display only the table after executing the command.
+        Clear-Host
+        Print-TableAndPrompt $remoteRoutes
     }
     catch {
         Write-Host "An error occurred: $_"
