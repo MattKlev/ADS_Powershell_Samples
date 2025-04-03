@@ -170,7 +170,13 @@ try {
             $winscpExePath = "C:\Program Files (x86)\WinSCP\WinSCP.exe"
             $target = $selectedRoute.Address
             Write-Output "Opening WinSCP with Administrator password '1' and root privileges..."
-            & $winscpExePath "sftp://Administrator:1@$target/" "/rawsettings" "SftpServer=doas /usr/libexec/sftp-server"
+            try {
+                & $winscpExePath "sftp://Administrator:1@$target/" "/rawsettings" "SftpServer=doas /usr/libexec/sftp-server"
+            }
+            catch {
+                Write-Output "Failed to start WinSCP. Please download and install WinSCP from https://winscp.net/eng/download.php"
+                Start-Process "https://winscp.net/eng/download.php"
+            }
         }
         else {
             Write-Output "Invalid selection. Please choose a valid option."
