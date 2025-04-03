@@ -1,8 +1,24 @@
-﻿# Check if running PowerShell is version 7 or later.
+﻿# Function: Wait for key input up to a timeout (without printing a prompt).
+function Read-InputWithTimeout {
+    param(
+        [int]$TimeoutSeconds = 10
+    )
+    $endTime = (Get-Date).AddSeconds($TimeoutSeconds)
+    $inputString = ""
+    while ((Get-Date) -lt $endTime) {
+        if ([Console]::KeyAvailable) {
+            $key = [Console]::ReadKey($true)
+            if ($key.Key -eq "Enter") { break }
+            $inputString += $key.KeyChar
+        }
+        Start-Sleep -Milliseconds 100
+    }
+    return $inputString.Trim()
+}
+
+# Pre-flight checks.
 if ($PSVersionTable.PSVersion.Major -lt 7) {
     Write-Host "This script requires PowerShell 7 or newer. Current version: $($PSVersionTable.PSVersion)"
-    
-    # If winget is available, try to install PowerShell 7.
     if (Get-Command winget -ErrorAction SilentlyContinue) {
         Write-Host "Attempting to install PowerShell 7 using winget..."
         try {
@@ -16,22 +32,16 @@ if ($PSVersionTable.PSVersion.Major -lt 7) {
     else {
         Write-Host "Winget is not available. Opening the PowerShell 7 download page..."
         Start-Process "https://github.com/PowerShell/PowerShell/releases"
-        Write-Host "Here is version 7.5.0"
-        Start-Process "https://github.com/PowerShell/PowerShell/releases/tag/v7.5.0"
     }
-    
     Read-Host "Press Enter to exit"
     exit 1
 }
 
-# Ensure all errors are treated as terminating.
 $ErrorActionPreference = "Stop"
-
-# Suppress all progress displays globally.
 $ProgressPreference = 'SilentlyContinue'
 
-# Verify that PowerShellGet is up to date.
-$psgModule = Get-Module -ListAvailable -Name PowerShellGet | Sort-Object Version -Descending | Select-Object -First 1
+$psgModule = Get-Module -ListAvailable -Name PowerShellGet |
+             Sort-Object Version -Descending | Select-Object -First 1
 if (-not $psgModule -or $psgModule.Version -lt [version]"2.2.5") {
     Write-Host "Your PowerShellGet module is outdated (version $($psgModule.Version) found)."
     Write-Host "Please update it to at least version 2.2.5 using:"
@@ -40,13 +50,11 @@ if (-not $psgModule -or $psgModule.Version -lt [version]"2.2.5") {
     exit 1
 }
 
-# Function to check and install a required module.
 function Assert-ModuleInstalled {
     param(
         [Parameter(Mandatory = $true)]
         [string]$ModuleName
     )
-    
     if (-not (Get-Module -ListAvailable -Name $ModuleName)) {
         Write-Host "Module '$ModuleName' is not installed. Attempting to install..."
         try {
@@ -61,46 +69,25 @@ function Assert-ModuleInstalled {
     }
 }
 
-# Ensure the required module TcXaeMgmt is installed.
 Assert-ModuleInstalled -ModuleName "TcXaeMgmt"
-
-# Verify that TcXaeMgmt is now available.
 if (-not (Get-Module -ListAvailable -Name "TcXaeMgmt")) {
     Write-Host "Module 'TcXaeMgmt' is not properly installed."
-    Write-Host "Please ensure that you have followed the installation instructions from:"
+    Write-Host "Please follow the instructions at:"
     Write-Host "https://infosys.beckhoff.com/content/1033/tc3_ads_ps_tcxaemgmt/5531473547.html?id=5297548616814834841"
     Read-Host "Press Enter to exit"
     exit 1
 }
 
-try {
-    # Import the required module.
-    Import-Module TcXaeMgmt -Force
+# This variable holds the JSON version of the previous device list.
+$prevTargetListJSON = $null
 
-    # Get the AMS Net ID of the local system.
-    $localNetID = Get-AmsNetId
-
-    # Perform a broadcast search for all available ADS routes.
-    $adsRoutes = Get-AdsRoute -All
-
-    # Filter out the local system using AMS Net ID.
-    $remoteRoutes = $adsRoutes | Where-Object { 
-        $_.NetId -ne $localNetID 
-    }
-
-    # Check if any remote routes were found.
-    if ($remoteRoutes.Count -eq 0) {
-        Write-Output "No remote ADS routes found."
-        Read-Host "Press Enter to exit"
-        exit
-    }
-
-    # Display the list of targets in a table format.
-    Write-Output "Found the following remote targets:"
-    $table = @()
-    for ($i = 0; $i -lt $remoteRoutes.Count; $i++) {
+# Print the table and prompt once.
+function Print-TableAndPrompt {
+    param($remoteRoutes)
+    # Build a table object.
+    $table = for ($i = 0; $i -lt $remoteRoutes.Count; $i++) {
         $route = $remoteRoutes[$i]
-        $table += [PSCustomObject]@{
+        [PSCustomObject]@{
             Number   = $i + 1
             Name     = $route.Name
             IP       = $route.Address
@@ -109,16 +96,53 @@ try {
         }
     }
     $table | Format-Table -AutoSize
+    Write-Host ""
+    Write-Host "Select a target by entering its number (or type 'exit' to quit):" -ForegroundColor Cyan
+}
 
-    # Ask the user to select a target.
-    $selection = Read-Host "Select a target by entering the corresponding number"
+# Main loop.
+do {
+    try {
+        Import-Module TcXaeMgmt -Force
+        $localNetID = Get-AmsNetId
 
-    # Validate the user input.
-    if ($selection -match '^\d+$' -and $selection -gt 0 -and $selection -le $remoteRoutes.Count) {
+        # Perform the broadcast search.
+        $adsRoutes = Get-AdsRoute -All
+        $remoteRoutes = $adsRoutes | Where-Object { $_.NetId -ne $localNetID } | Sort-Object -Property Name
+
+        # Convert the list to JSON with a sufficient depth.
+        $currentTargetListJSON = $remoteRoutes | ConvertTo-Json -Compress -Depth 5
+
+        # If the device list has changed (or if first run), update display.
+        if ($prevTargetListJSON -ne $currentTargetListJSON) {
+            Clear-Host
+            Print-TableAndPrompt $remoteRoutes
+            $prevTargetListJSON = $currentTargetListJSON
+        }
+        
+        # Wait up to 10 seconds for user input (without reprinting the prompt).
+        $selection = Read-InputWithTimeout 10
+
+        if ($selection -eq "exit") { break }
+        if ($selection -eq "") {
+            # No input: go back to checking broadcast search.
+            continue
+        }
+        if ($selection -notmatch '^\d+$' -or $selection -le 0 -or $selection -gt $remoteRoutes.Count) {
+            Write-Host "Invalid selection. Continuing..."
+            Start-Sleep -Seconds 1
+            continue
+        }
+
         $selectedRoute = $remoteRoutes[$selection - 1]
-        Write-Output "You selected: $($selectedRoute.Name), IP: $($selectedRoute.Address), AMS Net ID: $($selectedRoute.NetId), OS: $($selectedRoute.RTSystem)"
 
-        # Determine URL and default connection based on the operating system.
+        # Clear the screen and re-display the table (to keep the table visible)
+        Clear-Host
+        Print-TableAndPrompt $remoteRoutes
+        Write-Host ""
+        Write-Host "You selected: $($selectedRoute.Name), IP: $($selectedRoute.Address), AMS Net ID: $($selectedRoute.NetId), OS: $($selectedRoute.RTSystem)" -ForegroundColor Yellow
+
+        # Determine connection method.
         if ($selectedRoute.RTSystem -like "Win*") {
             $deviceManagerURL = "https://$($selectedRoute.Address)/config"
             $defaultAction = "RDP"
@@ -128,68 +152,56 @@ try {
             $defaultAction = "SSH"
         }
         else {
-            Write-Output "Unsupported operating system type for remote connection: $($selectedRoute.RTSystem)"
-            exit 1
+            continue
         }
 
-        # Offer different choices based on OS.
+        # Present connection options.
         if ($selectedRoute.RTSystem -like "TcBSD*") {
-            Write-Output "Connection options for target '$($selectedRoute.Name)':"
-            Write-Output "   1) Open Beckhoff Device Manager webpage ($deviceManagerURL)"
-            Write-Output "   2) Start SSH session"
-            Write-Output "   3) Open WinSCP connection as Administrator with root privileges"
+            Write-Host "Connection options for target '$($selectedRoute.Name)':" -ForegroundColor Cyan
+            Write-Host "   1) Open Beckhoff Device Manager webpage ($deviceManagerURL)"
+            Write-Host "   2) Start SSH session"
+            Write-Host "   3) Open WinSCP connection as Administrator with root privileges"
             $connectionChoice = Read-Host "Enter 1, 2, or 3"
         }
         else {
-            Write-Output "Connection options for target '$($selectedRoute.Name)':"
-            Write-Output "   1) Open Beckhoff Device Manager webpage ($deviceManagerURL)"
-            Write-Output "   2) Start Remote Desktop session ($defaultAction)"
+            Write-Host "Connection options for target '$($selectedRoute.Name)':" -ForegroundColor Cyan
+            Write-Host "   1) Open Beckhoff Device Manager webpage ($deviceManagerURL)"
+            Write-Host "   2) Start Remote Desktop session ($defaultAction)"
             $connectionChoice = Read-Host "Enter 1 or 2"
         }
 
-        if ($connectionChoice -eq "1") {
-            Write-Output "Opening Beckhoff Device Manager webpage at $deviceManagerURL ..."
-            Start-Process $deviceManagerURL
-        }
-        elseif ($connectionChoice -eq "2") {
-            if ($selectedRoute.RTSystem -like "Win*") {
-                $cmdkeyCommand = "cmdkey /generic:TERMSRV/$($selectedRoute.Address) /user:Administrator /pass:1"
-                Invoke-Expression $cmdkeyCommand | Out-Null
-                $remoteDesktopCommand = "mstsc /v:$($selectedRoute.Address)"
-                Write-Output "Starting Remote Desktop session..."
-                Invoke-Expression $remoteDesktopCommand
+        switch ($connectionChoice) {
+            "1" {
+                Start-Process $deviceManagerURL
             }
-            elseif ($selectedRoute.RTSystem -like "TcBSD*") {
-                $sshCommand = "ssh Administrator@$($selectedRoute.Address)"
-                Write-Output "Starting SSH session..."
-                Invoke-Expression $sshCommand
+            "2" {
+                if ($selectedRoute.RTSystem -like "Win*") {
+                    $cmdkeyCommand = "cmdkey /generic:TERMSRV/$($selectedRoute.Address) /user:Administrator /pass:1"
+                    Invoke-Expression $cmdkeyCommand | Out-Null
+                    $remoteDesktopCommand = "mstsc /v:$($selectedRoute.Address)"
+                    Invoke-Expression $remoteDesktopCommand
+                }
+                elseif ($selectedRoute.RTSystem -like "TcBSD*") {
+                    Start-Process -FilePath "powershell.exe" -ArgumentList "-NoExit", "-Command", "ssh Administrator@$($selectedRoute.Address)"
+                }
             }
-        }
-        elseif ($connectionChoice -eq "3" -and $selectedRoute.RTSystem -like "TcBSD*") {
-            # For Tc/BSD: Open WinSCP with Administrator:1 and raw settings.
-            $winscpExePath = "C:\Program Files (x86)\WinSCP\WinSCP.exe"
-            $target = $selectedRoute.Address
-            Write-Output "Opening WinSCP with Administrator password '1' and root privileges..."
-            try {
-                & $winscpExePath "sftp://Administrator:1@$target/" "/rawsettings" "SftpServer=doas /usr/libexec/sftp-server"
+            "3" {
+                if ($selectedRoute.RTSystem -like "TcBSD*") {
+                    $winscpExePath = "C:\Program Files (x86)\WinSCP\WinSCP.exe"
+                    $target = $selectedRoute.Address
+                    try {
+                        & $winscpExePath "sftp://Administrator:1@$target/" "/rawsettings" "SftpServer=doas /usr/libexec/sftp-server"
+                    }
+                    catch {
+                        Start-Process "https://winscp.net/eng/download.php"
+                    }
+                }
             }
-            catch {
-                Write-Output "Failed to start WinSCP. Please download and install WinSCP from https://winscp.net/eng/download.php"
-                Start-Process "https://winscp.net/eng/download.php"
-            }
+            default { }
         }
-        else {
-            Write-Output "Invalid selection. Please choose a valid option."
-            Read-Host "Press Enter to exit"
-        }
+        # After executing a command, immediately loop back (the table remains visible until new results appear).
     }
-    else {
-        Write-Output "Invalid selection. Please select a number from 1 to $($remoteRoutes.Count) and run the script again."
-        Read-Host "Press Enter to exit"
+    catch {
+        Write-Host "An error occurred: $_"
     }
-}
-catch {
-    Write-Host "An error occurred: $_"
-    Read-Host "Press Enter to exit"
-    exit 1
-}
+} while ($true)
