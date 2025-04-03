@@ -17,7 +17,7 @@ if ($PSVersionTable.PSVersion.Major -lt 7) {
         Write-Host "Winget is not available. Opening the PowerShell 7 download page..."
         Start-Process "https://github.com/PowerShell/PowerShell/releases"
 
-        Write-Host "Here is version version 7.5.0"
+        Write-Host "Here is version 7.5.0"
         Start-Process "https://github.com/PowerShell/PowerShell/releases/tag/v7.5.0"
     }
     
@@ -119,22 +119,47 @@ try {
         $selectedRoute = $remoteRoutes[$selection - 1]
         Write-Output "You selected: $($selectedRoute.Name), IP: $($selectedRoute.Address), AMS Net ID: $($selectedRoute.NetId), OS: $($selectedRoute.RTSystem)"
 
+        # Determine URL and default connection based on the operating system.
         if ($selectedRoute.RTSystem -like "Win*") {
-            # If target is Windows, use Remote Desktop.
-            $cmdkeyCommand = "cmdkey /generic:TERMSRV/$($selectedRoute.Address) /user:Administrator /pass:1"
-            Invoke-Expression $cmdkeyCommand > $null
-
-            $remoteDesktopCommand = "mstsc /v:$($selectedRoute.Address)"
-            Write-Output "Starting Remote Desktop session..."
-            Invoke-Expression $remoteDesktopCommand
-
+            $deviceManagerURL = "https://$($selectedRoute.Address)/config"
+            $defaultAction = "RDP"
         } elseif ($selectedRoute.RTSystem -like "TcBSD*") {
-            # If target is Tc/BSD, use SSH.
-            $sshCommand = "ssh Administrator@$($selectedRoute.Address)"
-            Write-Output "Starting SSH session..."
-            Invoke-Expression $sshCommand
+            $deviceManagerURL = "https://$($selectedRoute.Address)"
+            $defaultAction = "SSH"
         } else {
             Write-Output "Unsupported operating system type for remote connection: $($selectedRoute.RTSystem)"
+            exit 1
+        }
+
+        # Ask user for connection type.
+        Write-Output "Connection options for target '$($selectedRoute.Name)':"
+        Write-Output "   1) Open Beckhoff Device Manager webpage ($deviceManagerURL)"
+        Write-Output "   2) Start default remote connection ($defaultAction)"
+        $connectionChoice = Read-Host "Enter 1 or 2"
+
+        if ($connectionChoice -eq "1") {
+            Write-Output "Opening Beckhoff Device Manager webpage at $deviceManagerURL ..."
+            Start-Process $deviceManagerURL
+        }
+        elseif ($connectionChoice -eq "2") {
+            if ($selectedRoute.RTSystem -like "Win*") {
+                # If target is Windows, use Remote Desktop.
+                $cmdkeyCommand = "cmdkey /generic:TERMSRV/$($selectedRoute.Address) /user:Administrator /pass:1"
+                Invoke-Expression $cmdkeyCommand > $null
+
+                $remoteDesktopCommand = "mstsc /v:$($selectedRoute.Address)"
+                Write-Output "Starting Remote Desktop session..."
+                Invoke-Expression $remoteDesktopCommand
+            } elseif ($selectedRoute.RTSystem -like "TcBSD*") {
+                # If target is Tc/BSD, use SSH.
+                $sshCommand = "ssh Administrator@$($selectedRoute.Address)"
+                Write-Output "Starting SSH session..."
+                Invoke-Expression $sshCommand
+            }
+        }
+        else {
+            Write-Output "Invalid selection. Please choose either 1 or 2."
+            Read-Host "Press Enter to exit"
         }
 
     } else {
