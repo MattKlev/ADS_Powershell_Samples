@@ -41,7 +41,7 @@ if ($PSVersionTable.PSVersion.Major -lt 7) {
 $ErrorActionPreference = "Stop"
 $ProgressPreference = 'SilentlyContinue'
 
-$psgModule = Get-Module -ListAvailable -Name PowerShellGet |
+$psgModule = Get-Module -ListAvailable -Name PowerShellGet | 
              Sort-Object Version -Descending | Select-Object -First 1
 if (-not $psgModule -or $psgModule.Version -lt [version]"2.2.5") {
     Write-Host "Your PowerShellGet module is outdated (version $($psgModule.Version) found)."
@@ -178,10 +178,26 @@ do {
             }
             "2" {
                 if ($selectedRoute.RTSystem -like "Win*") {
+                    # Set credentials for the remote host using cmdkey.
                     $cmdkeyCommand = "cmdkey /generic:TERMSRV/$($selectedRoute.Address) /user:Administrator /pass:1"
                     Invoke-Expression $cmdkeyCommand | Out-Null
-                    $remoteDesktopCommand = "mstsc /v:$($selectedRoute.Address)"
-                    Invoke-Expression $remoteDesktopCommand
+
+                    # Create a temporary RDP file with smart sizing enabled.
+                    # Sanitize the computer name to generate a valid file name.
+                    $targetName = ($selectedRoute.Name -replace '[\\\/:*?"<>|]', '_')
+                    $rdpFile = Join-Path $env:TEMP ("$targetName.rdp")
+                    $rdpContent = @"
+screen mode id:i:2
+full address:s:$($selectedRoute.Address)
+desktopwidth:i:1280
+desktopheight:i:720
+session bpp:i:32
+smart sizing:i:1
+"@
+                    $rdpContent | Set-Content -Path $rdpFile -Encoding ASCII
+
+                    # Launch Remote Desktop session using the updated RDP file.
+                    mstsc.exe $rdpFile
                 }
                 elseif ($selectedRoute.RTSystem -like "TcBSD*") {
                     Start-Process -FilePath "powershell.exe" -ArgumentList "-NoExit", "-Command", "ssh Administrator@$($selectedRoute.Address)"
