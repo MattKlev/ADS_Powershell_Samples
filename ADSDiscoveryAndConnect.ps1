@@ -146,11 +146,12 @@ do {
         # Determine connection method.
         if ($selectedRoute.RTSystem -like "Win*") {
             $deviceManagerURL = "https://$($selectedRoute.Address)/config"
-            $defaultAction = "RDP"
         }
         elseif ($selectedRoute.RTSystem -like "TcBSD*") {
-            $deviceManagerURL = "https://$($selectedRoute.Address)"
-            $defaultAction = "SSH"
+            $deviceManagerURL = "https://$($selectedRoute.Address)"   
+        }
+        elseif ($selectedRoute.RTSystem -like "TcRTOS*") {
+            $deviceManagerURL = "http://$($selectedRoute.Address)/config"
         }
         else {
             continue
@@ -165,11 +166,20 @@ do {
             Write-Host "   4) Open both SSH session and WinSCP"
             $connectionChoice = Read-Host "Enter 1, 2, 3, or 4"
         }
-        else {
+        elseif ($selectedRoute.RTSystem -like "TcRTOS*") {
             Write-Host "Connection options for target '$($selectedRoute.Name)':" -ForegroundColor Cyan
             Write-Host "   1) Open Beckhoff Device Manager webpage ($deviceManagerURL)"
-            Write-Host "   2) Start Remote Desktop session ($defaultAction)"
+            $connectionChoice = Read-Host "Enter 1"
+        }
+        elseif ($selectedRoute.RTSystem -like "Win*")
+        {
+            Write-Host "Connection options for target '$($selectedRoute.Name)':" -ForegroundColor Cyan
+            Write-Host "   1) Open Beckhoff Device Manager webpage ($deviceManagerURL)"
+            Write-Host "   2) Start Remote Desktop session"
             $connectionChoice = Read-Host "Enter 1 or 2"
+        }
+        else {
+            continue
         }
 
         switch ($connectionChoice) {
