@@ -186,16 +186,19 @@ do {
         elseif ($selectedRoute.RTSystem -like "TcRTOS*") {
             $deviceManagerURL = "http://$($selectedRoute.Address)/config"
         }
+        elseif ($selectedRoute.RTSystem -like "*Linux*") {
+            $deviceManagerURL = "https://$($selectedRoute.Address)"
+        }
         else {
             continue
         }
 
         # Present connection options.
-        if ($selectedRoute.RTSystem -like "TcBSD*") {
+        if ($selectedRoute.RTSystem -like "TcBSD*" -or $selectedRoute.RTSystem -like "*Linux*") {
             Write-Host "Connection options for target '$($selectedRoute.Name)':" -ForegroundColor Cyan
             Write-Host "   1) Open Beckhoff Device Manager webpage ($deviceManagerURL)"
             Write-Host "   2) Start SSH session"
-            Write-Host "   3) Open WinSCP connection as Administrator with root privileges"
+            Write-Host "   3) Open WinSCP connection"
             Write-Host "   4) Open both SSH session and WinSCP"
             $connectionChoice = Read-Host "Enter 1, 2, 3, or 4"
         }
@@ -242,7 +245,7 @@ smart sizing:i:1
                     # Launch Remote Desktop session using the updated RDP file.
                     mstsc.exe $rdpFile
                 }
-                elseif ($selectedRoute.RTSystem -like "TcBSD*") {
+                elseif ($selectedRoute.RTSystem -like "TcBSD*" -or $selectedRoute.RTSystem -like "*Linux*") {
                     Start-Process -FilePath "powershell.exe" -ArgumentList "-NoExit", "-Command", "ssh Administrator@$($selectedRoute.Address)"
                 }
             }
@@ -252,6 +255,16 @@ smart sizing:i:1
                     $target = $selectedRoute.Address
                     try {
                         & $winscpExePath "sftp://Administrator:1@$target/" "/rawsettings" "SftpServer=doas /usr/libexec/sftp-server"
+                    }
+                    catch {
+                        Start-Process "https://winscp.net/eng/download.php"
+                    }
+                }
+                elseif ($selectedRoute.RTSystem -like "*Linux*") {
+                    $winscpExePath = "C:\Program Files (x86)\WinSCP\WinSCP.exe"
+                    $target = $selectedRoute.Address
+                    try {
+                        & $winscpExePath "sftp://$target"
                     }
                     catch {
                         Start-Process "https://winscp.net/eng/download.php"
@@ -267,6 +280,19 @@ smart sizing:i:1
                     $target = $selectedRoute.Address
                     try {
                        & $winscpExePath "sftp://Administrator:1@$target/" "/rawsettings" "SftpServer=doas /usr/libexec/sftp-server"
+                    }
+                    catch {
+                        Start-Process "https://winscp.net/eng/download.php"
+                    }
+                }
+                elseif ($selectedRoute.RTSystem -like "*Linux*") {
+                    # Open SSH session
+                    Start-Process -FilePath "powershell.exe" -ArgumentList "-NoExit", "-Command", "ssh Administrator@$($selectedRoute.Address)"
+                    # Open WinSCP connection
+                    $winscpExePath = "C:\Program Files (x86)\WinSCP\WinSCP.exe"
+                    $target = $selectedRoute.Address
+                    try {
+                       & $winscpExePath "sftp://$target"
                     }
                     catch {
                         Start-Process "https://winscp.net/eng/download.php"
