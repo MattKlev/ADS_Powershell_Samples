@@ -1,7 +1,8 @@
 ﻿# Function: Wait for key input up to a timeout (without printing a prompt).
 function Read-InputWithTimeout {
     param(
-        [int]$TimeoutSeconds = 10
+        [int]$TimeoutSeconds = 10,
+        [switch]$AllowRefresh = $false
     )
     
     $endTime = (Get-Date).AddSeconds($TimeoutSeconds)
@@ -9,7 +10,12 @@ function Read-InputWithTimeout {
     while ((Get-Date) -lt $endTime) {
         if ([Console]::KeyAvailable) {
             $key = [Console]::ReadKey($false)
-            if ($key.Key -eq "Enter") { break }
+            if ($key.Key -eq "Enter") { 
+                if ($AllowRefresh) {
+                    return "refresh"
+                }
+                break 
+            }
             $inputString += $key.KeyChar
         }
         Start-Sleep -Milliseconds 100
@@ -70,6 +76,24 @@ if (-not (Get-Module -ListAvailable -Name "TcXaeMgmt")) {
 # This variable holds the JSON version of the previous device list.
 $prevTargetListJSON = $null
 
+# Function to display no targets found message
+function Show-NoTargetsMessage {
+    Clear-Host
+    Write-Host "No target devices found." -ForegroundColor Yellow
+    Write-Host "" 
+    Write-Host "Possible reasons:" -ForegroundColor Cyan
+    Write-Host "1. No Beckhoff devices are currently connected or powered on" -ForegroundColor Gray
+    Write-Host "2. Network connectivity issues" -ForegroundColor Gray
+    Write-Host "3. ADS route discovery is not functioning" -ForegroundColor Gray
+    Write-Host ""
+    Write-Host "Troubleshooting tips:" -ForegroundColor Cyan
+    Write-Host "- Ensure devices are powered on and connected to the network" -ForegroundColor Gray
+    Write-Host "- Check network settings and firewall configurations" -ForegroundColor Gray
+    Write-Host ""
+    Write-Host "Automatically retrying in 10 seconds..." -ForegroundColor Green
+    Write-Host "Press Enter to manually refresh now" -ForegroundColor Green
+}
+
 # Print the table and prompt once.
 function Print-TableAndPrompt {
     param($remoteRoutes)
@@ -98,6 +122,27 @@ do {
         # Perform the broadcast search.
         $adsRoutes = Get-AdsRoute -All
         $remoteRoutes = $adsRoutes | Where-Object { $_.NetId -ne $localNetID } | Sort-Object -Property Name
+
+        # If no remote routes found, show message and wait
+        if ($remoteRoutes.Count -eq 0) {
+            Show-NoTargetsMessage
+            
+            # Wait up to 10 seconds, return immediately if Enter is pressed
+            $selection = Read-InputWithTimeout -TimeoutSeconds 10 -AllowRefresh
+            
+            # If manual refresh triggered, continue to next iteration
+            if ($selection -eq "refresh") {
+                continue
+            }
+            
+            # If exit selected, break the loop
+            if ($selection -eq "exit") { 
+                break 
+            }
+            
+            # If timeout occurred, continue to next iteration (which will retry search)
+            continue
+        }
 
         # Convert the list to JSON with a sufficient depth.
         $currentTargetListJSON = $remoteRoutes | ConvertTo-Json -Compress -Depth 5
