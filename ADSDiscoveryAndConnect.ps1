@@ -17,23 +17,11 @@ function Read-InputWithTimeout {
     return $inputString.Trim()
 }
 
-# Pre-flight checks.
+# Strict pre-flight check for PowerShell version
 if ($PSVersionTable.PSVersion.Major -lt 7) {
-    Write-Host "This script requires PowerShell 7 or newer. Current version: $($PSVersionTable.PSVersion)"
-    if (Get-Command winget -ErrorAction SilentlyContinue) {
-        Write-Host "Attempting to install PowerShell 7 using winget..."
-        try {
-            winget install --id Microsoft.PowerShell -e
-            Write-Host "PowerShell 7 installation initiated. Please restart the script using PowerShell 7."
-        }
-        catch {
-            Write-Host "Winget encountered an error. Please install PowerShell 7 manually."
-        }
-    }
-    else {
-        Write-Host "Winget is not available. Opening the PowerShell 7 download page..."
-        Start-Process "https://github.com/PowerShell/PowerShell/releases"
-    }
+    Write-Host "ERROR: This script requires PowerShell 7 or newer. Current version: $($PSVersionTable.PSVersion)" -ForegroundColor Red
+    Write-Host "Opening PowerShell 7 download page..." -ForegroundColor Yellow
+    Start-Process "https://github.com/PowerShell/PowerShell/releases"
     Read-Host "Press Enter to exit"
     exit 1
 }
