@@ -23,6 +23,36 @@ function Read-InputWithTimeout {
     return $inputString.Trim()
 }
 
+# Function to check CERHost port availability quickly
+function Test-CERHostAvailability {
+    param(
+        [string]$IPAddress,
+        [int]$Port = 987,
+        [int]$TimeoutMilliseconds = 1000
+    )
+    try {
+        $tcpClient = New-Object System.Net.Sockets.TcpClient
+        $asyncResult = $tcpClient.BeginConnect($IPAddress, $Port, $null, $null)
+        $wait = $asyncResult.AsyncWaitHandle.WaitOne($TimeoutMilliseconds, $false)
+        
+        if ($wait) {
+            $tcpClient.EndConnect($asyncResult)
+            return $true
+        }
+        else {
+            return $false
+        }
+    }
+    catch {
+        return $false
+    }
+    finally {
+        if ($tcpClient -ne $null) {
+            $tcpClient.Close()
+        }
+    }
+}
+
 # Strict pre-flight check for PowerShell version
 if ($PSVersionTable.PSVersion.Major -lt 7) {
     Write-Host "ERROR: This script requires PowerShell 7 or newer. Current version: $($PSVersionTable.PSVersion)" -ForegroundColor Red
@@ -189,6 +219,9 @@ do {
         elseif ($selectedRoute.RTSystem -like "*Linux*") {
             $deviceManagerURL = "https://$($selectedRoute.Address)"
         }
+        elseif ($selectedRoute.RTSystem -like "*CE*") {
+            $deviceManagerURL = "https://$($selectedRoute.Address)/config"
+        }
         else {
             continue
         }
@@ -213,6 +246,33 @@ do {
             Write-Host "   1) Open Beckhoff Device Manager webpage ($deviceManagerURL)"
             Write-Host "   2) Start Remote Desktop session"
             $connectionChoice = Read-Host "Enter 1 or 2"
+        }
+        elseif ($selectedRoute.RTSystem -like "*CE*") {
+            # Check CERHost port availability ONLY for CE devices
+            $cerHostAvailable = Test-CERHostAvailability -IPAddress $selectedRoute.Address
+            
+            Write-Host "Connection options for target '$($selectedRoute.Name)':" -ForegroundColor Cyan
+            Write-Host "   1) Open Beckhoff Device Manager webpage ($deviceManagerURL)"
+            
+            if ($cerHostAvailable) {
+                Write-Host "   2) Start CERHost Remote Desktop session" -ForegroundColor Green
+                $connectionChoice = Read-Host "Enter 1 or 2"
+            }
+            else {
+                Write-Host "   2) Start CERHost Remote Desktop session" -ForegroundColor Red
+                Write-Host "      Note: CERHost port (987) is not open. Enable CERHost on the host PC." -ForegroundColor Yellow
+                $connectionChoice = Read-Host "Enter 1 (or confirm to continue without CERHost)"
+                
+                # If user still wants to try CERHost, provide guidance
+                if ($connectionChoice -eq "2") {
+                    Write-Host "" -ForegroundColor Yellow
+                    Write-Host "CERHost is not available. To enable:" -ForegroundColor Yellow
+                    Write-Host "1. Open Beckhoff Device Manager webpage on the host pc" -ForegroundColor Gray
+                    Write-Host "2. Navigate to Device -> Boot -> Remote Display -> Set to ON" -ForegroundColor Gray
+                    Read-Host "Press Enter to continue"
+                    $connectionChoice = "1"
+                }
+            }
         }
         else {
             continue
@@ -247,6 +307,26 @@ smart sizing:i:1
                 }
                 elseif ($selectedRoute.RTSystem -like "TcBSD*" -or $selectedRoute.RTSystem -like "*Linux*") {
                     Start-Process -FilePath "powershell.exe" -ArgumentList "-NoExit", "-Command", "ssh Administrator@$($selectedRoute.Address)"
+                }
+                elseif ($selectedRoute.RTSystem -like "*CE*") {
+                    # Start CERHost for Windows CE device
+                    try {
+                        # Get the directory of the current script
+                        $scriptDirectory = Split-Path -Parent $MyInvocation.MyCommand.Definition
+                        $cerHostPath = Join-Path $scriptDirectory "CERHOST.exe"
+                        
+                        # Check if the file exists before trying to start it
+                        if (Test-Path $cerHostPath) {
+                            Start-Process $cerHostPath -ArgumentList "$($selectedRoute.Address)"
+                        }
+                        else {
+                            Write-Host "Error: CERHOST.exe not found in script directory." -ForegroundColor Red
+                            Write-Host "Expected location: $cerHostPath" -ForegroundColor Yellow
+                        }
+                    }
+                    catch {
+                        Write-Host "Error starting CERHost: $_" -ForegroundColor Red
+                    }
                 }
             }
             "3" {
