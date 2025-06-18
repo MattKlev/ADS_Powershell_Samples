@@ -137,15 +137,30 @@ function Show-TableAndPrompt {
     param($remoteRoutes)
     $table = for ($i = 0; $i -lt $remoteRoutes.Count; $i++) {
         $route = $remoteRoutes[$i]
+        $isUnknown = -not (
+            $route.RTSystem -like "Win*"    -or
+            $route.RTSystem -like "TcBSD*"  -or
+            $route.RTSystem -like "TcRTOS*" -or
+            $route.RTSystem -match "Linux"  -or
+            $route.RTSystem -match "CE"
+        )
         [PSCustomObject]@{
             Number   = $i + 1
             Name     = $route.Name
             IP       = $route.Address
             AMSNetID = $route.NetId
-            OS       = $route.RTSystem
+            OS       = if ($isUnknown) { "$($route.RTSystem) (Unknown)" } else { $route.RTSystem }
+            IsUnknown = $isUnknown
         }
     }
-    $table | Format-Table -AutoSize
+    # Print table with unknowns greyed out
+    foreach ($row in $table) {
+        if ($row.IsUnknown) {
+            Write-Host ("{0,2} {1,-20} {2,-15} {3,-20} {4}" -f $row.Number, $row.Name, $row.IP, $row.AMSNetID, $row.OS) -ForegroundColor DarkGray
+        } else {
+            Write-Host ("{0,2} {1,-20} {2,-15} {3,-20} {4}" -f $row.Number, $row.Name, $row.IP, $row.AMSNetID, $row.OS)
+        }
+    }
     Write-Host ""
     Write-Host "Select a target by entering its number (or type 'exit' to quit):" -ForegroundColor Cyan
 }
@@ -155,7 +170,7 @@ do {
     try {
       
         # Use broadcast to get all routes and filter out "Local"
-        $adsRoutes    = Get-AdsRoute -Broadcast 
+        $adsRoutes    = Get-AdsRoute -All 
         $remoteRoutes = $adsRoutes |
                         Where-Object { $_.IsLocal -ne $True } |
                         Sort-Object Name
@@ -188,6 +203,22 @@ do {
         }
 
         $selectedRoute = $remoteRoutes[$selection - 1]
+        # Check if unknown OS
+        $isUnknown = -not (
+            $selectedRoute.RTSystem -like "Win*"    -or
+            $selectedRoute.RTSystem -like "TcBSD*"  -or
+            $selectedRoute.RTSystem -like "TcRTOS*" -or
+            $selectedRoute.RTSystem -match "Linux"  -or
+            $selectedRoute.RTSystem -match "CE"
+        )
+        if ($isUnknown) {
+            Write-Host ""
+            Write-Host "Unknown target device selected: $($selectedRoute.Name) [$($selectedRoute.Address)] (AMS $($selectedRoute.NetId))" -ForegroundColor Yellow
+            Write-Host "This device type is not supported by this script. Please select a different target." -ForegroundColor Red
+            Start-Sleep -Seconds 2
+            continue
+        }
+
         Clear-Host
         Show-TableAndPrompt $remoteRoutes
         Write-Host ""
