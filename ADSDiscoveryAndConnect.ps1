@@ -56,39 +56,60 @@ function Test-CERHostAvailability {
 $ErrorActionPreference = "Stop"
 $ProgressPreference    = 'SilentlyContinue'
 
-function Assert-ModuleInstalled {
-    param(
-        [Parameter(Mandatory)]
-        [string]$ModuleName
-    )
-    if (-not (Get-Module -ListAvailable -Name $ModuleName)) {
-        Write-Host "Module '$ModuleName' is not installed. Attempting to install..." -ForegroundColor Yellow
+# Function to test and load the TcXaeMgmt module
+# This function checks the PowerShell edition and installs the appropriate version of the TcXaeMgmt module if it is not already available.
+function Test-TcXaeMgmtModule {
+    # Determine PowerShell edition and required module version
+    if ($PSVersionTable.PSEdition -eq 'Desktop') {
+        $versionRange = '3.2.*'
+    }
+    elseif ($PSVersionTable.PSEdition -eq 'Core') {
+        $versionRange = '6.*'
+    }
+    else {
+        Write-Host "Unknown PowerShell edition. Exiting." -ForegroundColor Red
+        exit 1
+    }
+
+    # Find the latest available version in the desired range
+    $module = Get-Module -ListAvailable -Name TcXaeMgmt | Where-Object { $_.Version -like $versionRange } | Sort-Object Version -Descending | Select-Object -First 1
+
+    if (-not $module) {
+        Write-Host "TcXaeMgmt module version $versionRange not found. Installing..." -ForegroundColor Yellow
         try {
-            Install-Module -Name $ModuleName -Scope CurrentUser -Force -AcceptLicense -SkipPublisherCheck
-            Write-Host "Module '$ModuleName' installed successfully." -ForegroundColor Green
+            # Install the latest version in the range from PSGallery
+            Install-Module -Name TcXaeMgmt -RequiredVersion ($versionRange -replace '\*','') -Scope CurrentUser -Force -AcceptLicense -SkipPublisherCheck
+            # Try to find it again after install
+            $module = Get-Module -ListAvailable -Name TcXaeMgmt | Where-Object { $_.Version -like $versionRange } | Sort-Object Version -Descending | Select-Object -First 1
         }
         catch {
-            Write-Host "Failed to install module '$ModuleName'. Error: $_" -ForegroundColor Red
+            Write-Host "Failed to install TcXaeMgmt ${versionRange}: $_" -ForegroundColor Red
             Read-Host "Press Enter to exit"
             exit 1
         }
     }
 
-    Import-Module $ModuleName -Force;
-    $ModuleInfo = Get-Module $ModuleName;
-    if ($ModuleInfo) {
-        Write-Host "Module '$ModuleName' is installed. Version: $($ModuleInfo.Version)" -ForegroundColor Green
+    if ($module) {
+        Import-Module TcXaeMgmt -RequiredVersion $($module.Version) -Force
+        $imported = Get-Module TcXaeMgmt
+        if ($imported -and $imported.Version -eq $module.Version) {
+            Write-Host "TcXaeMgmt $($imported.Version) loaded." -ForegroundColor Green
+        }
+        else {
+            Write-Host "Failed to load TcXaeMgmt $($module.Version)." -ForegroundColor Red
+            Read-Host "Press Enter to exit"
+            exit 1
+        }
     }
     else {
-        Write-Host "Module '$ModuleName' is not installed." -ForegroundColor Red
+        Write-Host "TcXaeMgmt module not found after attempted install." -ForegroundColor Red
         Read-Host "Press Enter to exit"
         exit 1
     }
 }
 
-# Check if the TcXaeMgmt module is installed
-# If not, install it from the PowerShell Gallery
-Assert-ModuleInstalled -ModuleName "TcXaeMgmt"
+# Check and load the correct TcXaeMgmt module version
+Test-TcXaeMgmtModule
 
 # This variable holds the JSON version of the previous device list.
 $prevTargetListJSON = $null
