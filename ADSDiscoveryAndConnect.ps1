@@ -39,17 +39,54 @@ function Read-InputWithTimeout {
     try {
         $endTime     = (Get-Date).AddSeconds($TimeoutSeconds)
         $inputString = ""
+        $cursorPos   = [Console]::CursorLeft
+        
         while ((Get-Date) -lt $endTime) {
             if ([Console]::KeyAvailable) {
-                $key = [Console]::ReadKey($false)
-                if ($key.Key -eq 'Enter') {
-                    if ($AllowRefresh) { return 'refresh' }
-                    break
-                } else {
-                    $inputString += $key.KeyChar
+                $key = [Console]::ReadKey($true)  # $true = don't display the key
+                
+                switch ($key.Key) {
+                    'Enter' {
+                        Write-Host ""  # Move to next line
+                        if ($AllowRefresh -and $inputString -eq "") { 
+                            return 'refresh' 
+                        }
+                        return $inputString.Trim()
+                    }
+                    'Backspace' {
+                        if ($inputString.Length -gt 0) {
+                            # Remove last character from string
+                            $inputString = $inputString.Substring(0, $inputString.Length - 1)
+                            
+                            # Move cursor back, write space to clear character, move back again
+                            [Console]::SetCursorPosition([Console]::CursorLeft - 1, [Console]::CursorTop)
+                            [Console]::Write(" ")
+                            [Console]::SetCursorPosition([Console]::CursorLeft - 1, [Console]::CursorTop)
+                        }
+                    }
+                    'Escape' {
+                        # Clear the entire input
+                        if ($inputString.Length -gt 0) {
+                            [Console]::SetCursorPosition($cursorPos, [Console]::CursorTop)
+                            [Console]::Write(" " * $inputString.Length)
+                            [Console]::SetCursorPosition($cursorPos, [Console]::CursorTop)
+                            $inputString = ""
+                        }
+                    }
+                    default {
+                        # Only add printable characters
+                        if ($key.KeyChar -match '[0-9a-zA-Z ]' -or $key.KeyChar -eq '.') {
+                            $inputString += $key.KeyChar
+                            [Console]::Write($key.KeyChar)
+                        }
+                    }
                 }
             }
-            Start-Sleep -Milliseconds 100
+            Start-Sleep -Milliseconds 50  # Reduced from 100ms for better responsiveness
+        }
+        
+        if ($inputString.Length -gt 0) {
+            Write-Host ""  # Move to next line if there's input
         }
         return $inputString.Trim()
     } catch {
@@ -235,7 +272,7 @@ function Show-ConnectionMenu {
     }
 }
 
-function Execute-ConnectionChoice {
+function Invoke-ConnectionChoice {
     [CmdletBinding()]
     param(
         [psobject]$Route,
@@ -295,18 +332,18 @@ smart sizing:i:1
             }
             '4' {
                 if ($Route.RTSystem -like "TcBSD*" -or $Route.RTSystem -match "Linux") {
-                    Execute-ConnectionChoice -Route $Route -Choice '2' -DeviceManagerUrl $DeviceManagerUrl -WinSCPPath $WinSCPPath -CerHostPath $CerHostPath -AdminUserName $AdminUserName -AdminPassword $AdminPassword
-                    Execute-ConnectionChoice -Route $Route -Choice '3' -DeviceManagerUrl $DeviceManagerUrl -WinSCPPath $WinSCPPath -CerHostPath $CerHostPath -AdminUserName $AdminUserName -AdminPassword $AdminPassword
+                    Invoke-ConnectionChoice -Route $Route -Choice '2' -DeviceManagerUrl $DeviceManagerUrl -WinSCPPath $WinSCPPath -CerHostPath $CerHostPath -AdminUserName $AdminUserName -AdminPassword $AdminPassword
+                    Invoke-ConnectionChoice -Route $Route -Choice '3' -DeviceManagerUrl $DeviceManagerUrl -WinSCPPath $WinSCPPath -CerHostPath $CerHostPath -AdminUserName $AdminUserName -AdminPassword $AdminPassword
                 }
             }
             default { 
-                Write-Warning "Invalid choice: $Choice. Valid options are 1, 2, 3, or 4."
+                Write-Warning "Invalid choice: $Choice. Please try again."
                 return
             }
         }
     } 
     catch {
-        throw "Error in Execute-ConnectionChoice: $_"
+        throw "Error in Invoke-ConnectionChoice: $_"
     }
 }
 
@@ -364,7 +401,7 @@ function Start-ADSDiscovery {
             Write-Information "Selected target: $($selectedRoute.Name) [$($selectedRoute.Address)] (AMS $($selectedRoute.NetId))"
             $deviceManagerUrl = Get-DeviceManagerUrl -Route $selectedRoute
             $choice           = Show-ConnectionMenu -Route $selectedRoute -DeviceManagerUrl $deviceManagerUrl -WinSCPPath $WinSCPPath -CerHostPath $CerHostPath -AdminUserName $AdminUserName -AdminPassword $AdminPassword
-            Execute-ConnectionChoice -Route $selectedRoute -Choice $choice -DeviceManagerUrl $deviceManagerUrl -WinSCPPath $WinSCPPath -CerHostPath $CerHostPath -AdminUserName $AdminUserName -AdminPassword $AdminPassword
+            Invoke-ConnectionChoice -Route $selectedRoute -Choice $choice -DeviceManagerUrl $deviceManagerUrl -WinSCPPath $WinSCPPath -CerHostPath $CerHostPath -AdminUserName $AdminUserName -AdminPassword $AdminPassword
             
             # Automatically return to device list - clear the screen and force refresh
             $prevTargetListJSON = ''
