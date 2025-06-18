@@ -1,4 +1,8 @@
-﻿# Function: Wait for key input up to a timeout (without printing a prompt).
+﻿# Store the current PowerShell version for debugging purposes
+$CurrentPSVersion = $PSVersionTable.PSVersion;
+Write-Host "Powershell Version: $CurrentPSVersion" -ForegroundColor Green
+
+# Function: Wait for key input up to a timeout (without printing a prompt).
 function Read-InputWithTimeout {
     param(
         [int]$TimeoutSeconds = 10,
@@ -49,58 +53,63 @@ function Test-CERHostAvailability {
     }
 }
 
-# Strict pre-flight check for PowerShell version
-if ($PSVersionTable.PSVersion.Major -lt 7) {
-    Write-Host "ERROR: This script requires PowerShell 7 or newer. Current version: $($PSVersionTable.PSVersion)" -ForegroundColor Red
-    Write-Host "Opening PowerShell 7 download page..." -ForegroundColor Yellow
-    Start-Process "https://github.com/PowerShell/PowerShell/releases"
-    Read-Host "Press Enter to exit"
-    exit 1
-}
-
 $ErrorActionPreference = "Stop"
 $ProgressPreference    = 'SilentlyContinue'
 
-$psgModule = Get-Module -ListAvailable -Name PowerShellGet |
-             Sort-Object Version -Descending |
-             Select-Object -First 1
+# Function to test and load the TcXaeMgmt module
+# This function checks the PowerShell edition and installs the appropriate version of the TcXaeMgmt module if it is not already available.
+function Test-TcXaeMgmtModule {
+    # Determine PowerShell edition and required module version
+    if ($PSVersionTable.PSEdition -eq 'Desktop') {
+        $versionRange = '3.2.*'
+    }
+    elseif ($PSVersionTable.PSEdition -eq 'Core') {
+        $versionRange = '6.*'
+    }
+    else {
+        Write-Host "Unknown PowerShell edition. Exiting." -ForegroundColor Red
+        exit 1
+    }
 
-if ((-not $psgModule) -or ($psgModule.Version -lt [version]"2.2.5")) {
-    Write-Host "Your PowerShellGet module is outdated (version $($psgModule.Version) found)." -ForegroundColor Yellow
-    Write-Host "Please update it to at least version 2.2.5 using:" -ForegroundColor Cyan
-    Write-Host "    Install-Module -Name PowerShellGet -Force -AllowClobber" -ForegroundColor Gray
-    Read-Host "Press Enter to exit"
-    exit 1
-}
+    # Find the latest available version in the desired range
+    $module = Get-Module -ListAvailable -Name TcXaeMgmt | Where-Object { $_.Version -like $versionRange } | Sort-Object Version -Descending | Select-Object -First 1
 
-function Assert-ModuleInstalled {
-    param(
-        [Parameter(Mandatory)]
-        [string]$ModuleName
-    )
-    if (-not (Get-Module -ListAvailable -Name $ModuleName)) {
-        Write-Host "Module '$ModuleName' is not installed. Attempting to install..." -ForegroundColor Yellow
+    if (-not $module) {
+        Write-Host "TcXaeMgmt module version $versionRange not found. Installing..." -ForegroundColor Yellow
         try {
-            Install-Module -Name $ModuleName -Scope CurrentUser -Force -AcceptLicense
-            Write-Host "Module '$ModuleName' installed successfully." -ForegroundColor Green
+            # Install the latest version in the range from PSGallery
+            Install-Module -Name TcXaeMgmt -RequiredVersion ($versionRange -replace '\*','') -Scope CurrentUser -Force -AcceptLicense -SkipPublisherCheck
+            # Try to find it again after install
+            $module = Get-Module -ListAvailable -Name TcXaeMgmt | Where-Object { $_.Version -like $versionRange } | Sort-Object Version -Descending | Select-Object -First 1
         }
         catch {
-            Write-Host "Failed to install module '$ModuleName'. Error: $_" -ForegroundColor Red
+            Write-Host "Failed to install TcXaeMgmt ${versionRange}: $_" -ForegroundColor Red
             Read-Host "Press Enter to exit"
             exit 1
         }
     }
+
+    if ($module) {
+        Import-Module TcXaeMgmt -RequiredVersion $($module.Version) -Force
+        $imported = Get-Module TcXaeMgmt
+        if ($imported -and $imported.Version -eq $module.Version) {
+            Write-Host "TcXaeMgmt $($imported.Version) loaded." -ForegroundColor Green
+        }
+        else {
+            Write-Host "Failed to load TcXaeMgmt $($module.Version)." -ForegroundColor Red
+            Read-Host "Press Enter to exit"
+            exit 1
+        }
+    }
+    else {
+        Write-Host "TcXaeMgmt module not found after attempted install." -ForegroundColor Red
+        Read-Host "Press Enter to exit"
+        exit 1
+    }
 }
 
-Assert-ModuleInstalled -ModuleName "TcXaeMgmt"
-
-if (-not (Get-Module -ListAvailable -Name "TcXaeMgmt")) {
-    Write-Host "Module 'TcXaeMgmt' is not properly installed." -ForegroundColor Red
-    Write-Host "Please follow the instructions at:" -ForegroundColor Cyan
-    Write-Host "https://infosys.beckhoff.com/content/1033/tc3_ads_ps_tcxaemgmt/5531473547.html" -ForegroundColor Gray
-    Read-Host "Press Enter to exit"
-    exit 1
-}
+# Check and load the correct TcXaeMgmt module version
+Test-TcXaeMgmtModule
 
 # This variable holds the JSON version of the previous device list.
 $prevTargetListJSON = $null
@@ -124,30 +133,46 @@ function Show-NoTargetsMessage {
 }
 
 # Print the table and prompt once
-function Print-TableAndPrompt {
+function Show-TableAndPrompt {
     param($remoteRoutes)
     $table = for ($i = 0; $i -lt $remoteRoutes.Count; $i++) {
         $route = $remoteRoutes[$i]
+        $isUnknown = -not (
+            $route.RTSystem -like "Win*"    -or
+            $route.RTSystem -like "TcBSD*"  -or
+            $route.RTSystem -like "TcRTOS*" -or
+            $route.RTSystem -match "Linux"  -or
+            $route.RTSystem -match "CE"
+        )
         [PSCustomObject]@{
             Number   = $i + 1
             Name     = $route.Name
             IP       = $route.Address
             AMSNetID = $route.NetId
-            OS       = $route.RTSystem
+            OS       = if ($isUnknown) { "$($route.RTSystem) (Unknown)" } else { $route.RTSystem }
+            IsUnknown = $isUnknown
         }
     }
-    $table | Format-Table -AutoSize
+    # Print table with unknowns greyed out
+    foreach ($row in $table) {
+        if ($row.IsUnknown) {
+            Write-Host ("{0,2} {1,-20} {2,-15} {3,-20} {4}" -f $row.Number, $row.Name, $row.IP, $row.AMSNetID, $row.OS) -ForegroundColor DarkGray
+        } else {
+            Write-Host ("{0,2} {1,-20} {2,-15} {3,-20} {4}" -f $row.Number, $row.Name, $row.IP, $row.AMSNetID, $row.OS)
+        }
+    }
     Write-Host ""
     Write-Host "Select a target by entering its number (or type 'exit' to quit):" -ForegroundColor Cyan
 }
 
+# Main loop to discover and connect to Beckhoff devices
 do {
     try {
-        Import-Module TcXaeMgmt -Force
-        $localNetID   = Get-AmsNetId
-        $adsRoutes    = Get-AdsRoute -All
+      
+        # Use broadcast to get all routes and filter out "Local"
+        $adsRoutes    = Get-AdsRoute -All 
         $remoteRoutes = $adsRoutes |
-                        Where-Object { $_.NetId -ne $localNetID } |
+                        Where-Object { $_.IsLocal -ne $True } |
                         Sort-Object Name
 
         if ($remoteRoutes.Count -eq 0) {
@@ -161,7 +186,7 @@ do {
         $currentTargetListJSON = $remoteRoutes | ConvertTo-Json -Compress -Depth 5
         if ($prevTargetListJSON -ne $currentTargetListJSON) {
             Clear-Host
-            Print-TableAndPrompt $remoteRoutes
+            Show-TableAndPrompt $remoteRoutes
             $prevTargetListJSON = $currentTargetListJSON
         }
 
@@ -178,8 +203,24 @@ do {
         }
 
         $selectedRoute = $remoteRoutes[$selection - 1]
+        # Check if unknown OS
+        $isUnknown = -not (
+            $selectedRoute.RTSystem -like "Win*"    -or
+            $selectedRoute.RTSystem -like "TcBSD*"  -or
+            $selectedRoute.RTSystem -like "TcRTOS*" -or
+            $selectedRoute.RTSystem -match "Linux"  -or
+            $selectedRoute.RTSystem -match "CE"
+        )
+        if ($isUnknown) {
+            Write-Host ""
+            Write-Host "Unknown target device selected: $($selectedRoute.Name) [$($selectedRoute.Address)] (AMS $($selectedRoute.NetId))" -ForegroundColor Yellow
+            Write-Host "This device type is not supported by this script. Please select a different target." -ForegroundColor Red
+            Start-Sleep -Seconds 2
+            continue
+        }
+
         Clear-Host
-        Print-TableAndPrompt $remoteRoutes
+        Show-TableAndPrompt $remoteRoutes
         Write-Host ""
         Write-Host "You selected: $($selectedRoute.Name) [$($selectedRoute.Address)] (AMS $($selectedRoute.NetId))" -ForegroundColor Yellow
 
@@ -331,10 +372,11 @@ smart sizing:i:1
         }
 
         Clear-Host
-        Print-TableAndPrompt $remoteRoutes
+        Show-TableAndPrompt $remoteRoutes
     }
     catch {
         Write-Host "An error occurred: $_" -ForegroundColor Red
     }
 } while ($true)
-```
+
+

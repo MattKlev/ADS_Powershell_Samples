@@ -1,0 +1,11 @@
+{
+  // Tell the PowerShell extension which version to pick from the Session Menu
+  //"powershell.powerShellDefaultVersion": "Windows PowerShell (x64)",
+  "powershell.powerShellDefaultVersion": "PowerShell (x64)",
+  // (Optional) Pin the exact exe path if you want to be 100% sure
+  //"powershell.powerShellExePath": "C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe",
+
+  // Other workspace-wide settings you might have…
+  // "editor.tabSize": 2,
+  // "files.exclude": { "**/*.tmp": true }
+}
