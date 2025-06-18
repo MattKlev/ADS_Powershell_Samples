@@ -119,33 +119,36 @@ function Test-CERHostAvailability {
 function Test-TcXaeMgmtModule {
     [CmdletBinding()]
     param()
+    
     try {
-        if ($PSVersionTable.PSEdition -eq 'Desktop') {
-            $versionRange = '3.2.*'
-        } elseif ($PSVersionTable.PSEdition -eq 'Core') {
-            $versionRange = '6.*'
-        } else {
-            throw "Unknown PowerShell edition: $($PSVersionTable.PSEdition)"
-        }
-        Write-Verbose "Checking for TcXaeMgmt module version $versionRange"
+        $minimumVersion = [version]'6.2.0'
+        Write-Verbose "Checking for TcXaeMgmt module version $minimumVersion or greater"
+        
+        # Check if version 6.2 or greater is already installed
         $module = Get-Module -ListAvailable -Name TcXaeMgmt |
-                  Where-Object { $_.Version -like $versionRange } |
+                  Where-Object { $_.Version -ge $minimumVersion } |
                   Sort-Object Version -Descending |
                   Select-Object -First 1
+        
         if (-not $module) {
-            Write-Information "Installing TcXaeMgmt module version $versionRange"
-            $specificVersion = if ($versionRange -eq '3.2.*') { '3.2.34' } else { '6.0.294' }
-            Install-Module -Name TcXaeMgmt -RequiredVersion $specificVersion -Scope CurrentUser -Force -AcceptLicense -SkipPublisherCheck
+            Write-Information "TcXaeMgmt version $minimumVersion or greater not found. Installing from PowerShell Gallery..."
+            Install-Module -Name TcXaeMgmt -Scope CurrentUser -Force -AcceptLicense -SkipPublisherCheck
+            
+            # Verify installation
             $module = Get-Module -ListAvailable -Name TcXaeMgmt |
-                      Where-Object { $_.Version -like $versionRange } |
+                      Where-Object { $_.Version -ge $minimumVersion } |
                       Sort-Object Version -Descending |
                       Select-Object -First 1
+            
             if (-not $module) {
-                throw "TcXaeMgmt module version $versionRange not found after installation."
+                throw "TcXaeMgmt module version $minimumVersion or greater not found after installation."
             }
         }
+        
+        # Always load the latest version that meets minimum requirements (6.2.0 or greater)
         Import-Module TcXaeMgmt -RequiredVersion $module.Version -Force
         Write-Verbose "Loaded TcXaeMgmt version $($module.Version)"
+        
     } catch {
         throw "Error in Test-TcXaeMgmtModule: $_"
     }
