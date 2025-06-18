@@ -1,4 +1,8 @@
-﻿# Function: Wait for key input up to a timeout (without printing a prompt).
+﻿# Store the current PowerShell version for debugging purposes
+$CurrentPSVersion = $PSVersionTable.PSVersion;
+Write-Host "Powershell Version: $CurrentPSVersion" -ForegroundColor Green
+
+# Function: Wait for key input up to a timeout (without printing a prompt).
 function Read-InputWithTimeout {
     param(
         [int]$TimeoutSeconds = 10,
@@ -49,29 +53,8 @@ function Test-CERHostAvailability {
     }
 }
 
-# Strict pre-flight check for PowerShell version
-if ($PSVersionTable.PSVersion.Major -lt 7) {
-    Write-Host "ERROR: This script requires PowerShell 7 or newer. Current version: $($PSVersionTable.PSVersion)" -ForegroundColor Red
-    Write-Host "Opening PowerShell 7 download page..." -ForegroundColor Yellow
-    Start-Process "https://github.com/PowerShell/PowerShell/releases"
-    Read-Host "Press Enter to exit"
-    exit 1
-}
-
 $ErrorActionPreference = "Stop"
 $ProgressPreference    = 'SilentlyContinue'
-
-$psgModule = Get-Module -ListAvailable -Name PowerShellGet |
-             Sort-Object Version -Descending |
-             Select-Object -First 1
-
-if ((-not $psgModule) -or ($psgModule.Version -lt [version]"2.2.5")) {
-    Write-Host "Your PowerShellGet module is outdated (version $($psgModule.Version) found)." -ForegroundColor Yellow
-    Write-Host "Please update it to at least version 2.2.5 using:" -ForegroundColor Cyan
-    Write-Host "    Install-Module -Name PowerShellGet -Force -AllowClobber" -ForegroundColor Gray
-    Read-Host "Press Enter to exit"
-    exit 1
-}
 
 function Assert-ModuleInstalled {
     param(
@@ -81,7 +64,7 @@ function Assert-ModuleInstalled {
     if (-not (Get-Module -ListAvailable -Name $ModuleName)) {
         Write-Host "Module '$ModuleName' is not installed. Attempting to install..." -ForegroundColor Yellow
         try {
-            Install-Module -Name $ModuleName -Scope CurrentUser -Force -AcceptLicense
+            Install-Module -Name $ModuleName -Scope CurrentUser -Force -AcceptLicense -SkipPublisherCheck
             Write-Host "Module '$ModuleName' installed successfully." -ForegroundColor Green
         }
         catch {
@@ -90,17 +73,22 @@ function Assert-ModuleInstalled {
             exit 1
         }
     }
+
+    Import-Module $ModuleName -Force;
+    $ModuleInfo = Get-Module $ModuleName;
+    if ($ModuleInfo) {
+        Write-Host "Module '$ModuleName' is installed. Version: $($ModuleInfo.Version)" -ForegroundColor Green
+    }
+    else {
+        Write-Host "Module '$ModuleName' is not installed." -ForegroundColor Red
+        Read-Host "Press Enter to exit"
+        exit 1
+    }
 }
 
+# Check if the TcXaeMgmt module is installed
+# If not, install it from the PowerShell Gallery
 Assert-ModuleInstalled -ModuleName "TcXaeMgmt"
-
-if (-not (Get-Module -ListAvailable -Name "TcXaeMgmt")) {
-    Write-Host "Module 'TcXaeMgmt' is not properly installed." -ForegroundColor Red
-    Write-Host "Please follow the instructions at:" -ForegroundColor Cyan
-    Write-Host "https://infosys.beckhoff.com/content/1033/tc3_ads_ps_tcxaemgmt/5531473547.html" -ForegroundColor Gray
-    Read-Host "Press Enter to exit"
-    exit 1
-}
 
 # This variable holds the JSON version of the previous device list.
 $prevTargetListJSON = $null
@@ -124,7 +112,7 @@ function Show-NoTargetsMessage {
 }
 
 # Print the table and prompt once
-function Print-TableAndPrompt {
+function Show-TableAndPrompt {
     param($remoteRoutes)
     $table = for ($i = 0; $i -lt $remoteRoutes.Count; $i++) {
         $route = $remoteRoutes[$i]
@@ -141,13 +129,14 @@ function Print-TableAndPrompt {
     Write-Host "Select a target by entering its number (or type 'exit' to quit):" -ForegroundColor Cyan
 }
 
+# Main loop to discover and connect to Beckhoff devices
 do {
     try {
-        Import-Module TcXaeMgmt -Force
-        $localNetID   = Get-AmsNetId
-        $adsRoutes    = Get-AdsRoute -All
+      
+        # Use broadcast to get all routes and filter out "Local"
+        $adsRoutes    = Get-AdsRoute -Broadcast 
         $remoteRoutes = $adsRoutes |
-                        Where-Object { $_.NetId -ne $localNetID } |
+                        Where-Object { $_.IsLocal -ne $True } |
                         Sort-Object Name
 
         if ($remoteRoutes.Count -eq 0) {
@@ -161,7 +150,7 @@ do {
         $currentTargetListJSON = $remoteRoutes | ConvertTo-Json -Compress -Depth 5
         if ($prevTargetListJSON -ne $currentTargetListJSON) {
             Clear-Host
-            Print-TableAndPrompt $remoteRoutes
+            Show-TableAndPrompt $remoteRoutes
             $prevTargetListJSON = $currentTargetListJSON
         }
 
@@ -179,7 +168,7 @@ do {
 
         $selectedRoute = $remoteRoutes[$selection - 1]
         Clear-Host
-        Print-TableAndPrompt $remoteRoutes
+        Show-TableAndPrompt $remoteRoutes
         Write-Host ""
         Write-Host "You selected: $($selectedRoute.Name) [$($selectedRoute.Address)] (AMS $($selectedRoute.NetId))" -ForegroundColor Yellow
 
@@ -331,10 +320,11 @@ smart sizing:i:1
         }
 
         Clear-Host
-        Print-TableAndPrompt $remoteRoutes
+        Show-TableAndPrompt $remoteRoutes
     }
     catch {
         Write-Host "An error occurred: $_" -ForegroundColor Red
     }
 } while ($true)
-```
+
+
