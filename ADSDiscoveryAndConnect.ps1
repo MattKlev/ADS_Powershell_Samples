@@ -27,7 +27,7 @@ param(
     [Parameter(Mandatory=$false)]
     [string]$AdminUserName = "Administrator",
     [Parameter(Mandatory=$false)]
-    [string]$AdminPassword = "1"
+    [SecureString]$AdminPassword = (ConvertTo-SecureString "1" -AsPlainText -Force)
 )
 
 function Read-InputWithTimeout {
@@ -321,7 +321,7 @@ function Show-ConnectionMenu {
         [string]$WinSCPPath,
         [string]$CerHostPath,
         [string]$AdminUserName,
-        [string]$AdminPassword
+        [SecureString]$AdminPassword
     )
     try {
         Write-Host "Connection options for target '$($Route.Name)':" -ForegroundColor Cyan
@@ -372,7 +372,7 @@ function Invoke-ConnectionChoice {
         [string]$WinSCPPath,
         [string]$CerHostPath,
         [string]$AdminUserName,
-        [string]$AdminPassword
+        [SecureString]$AdminPassword
     )
     try {
         switch ($Choice) {
@@ -381,7 +381,8 @@ function Invoke-ConnectionChoice {
             }
             '2' {
                 if ($Route.RTSystem -like "Win*") {
-                    $cmdkeyCommand = "cmdkey /generic:TERMSRV/$($Route.Address) /user:$AdminUserName /pass:$AdminPassword"
+                    $plainPassword = [Runtime.InteropServices.Marshal]::PtrToStringAuto([Runtime.InteropServices.Marshal]::SecureStringToBSTR($AdminPassword))
+                    $cmdkeyCommand = "cmdkey /generic:TERMSRV/$($Route.Address) /user:$AdminUserName /pass:$plainPassword"
                     cmd /c $cmdkeyCommand | Out-Null
                     $rdpFile = Join-Path $env:TEMP ("$($Route.Name -replace '[\\\/:*?"<>|]', '_').rdp")
                     @"
@@ -423,8 +424,9 @@ smart sizing:i:1
             '3' {
                 if ($Route.RTSystem -like "TcBSD*" -or $Route.RTSystem -match "Linux") {
                     try {
-                        if ($Route.RTSystem -like "TcBSD*") {
-                            & $WinSCPPath "sftp://${AdminUserName}:$AdminPassword@$($Route.Address)/" "/rawsettings" "SftpServer=doas /usr/libexec/sftp-server"
+                        if (Test-Path $WinSCPPath) {
+                            $plainPassword = [Runtime.InteropServices.Marshal]::PtrToStringAuto([Runtime.InteropServices.Marshal]::SecureStringToBSTR($AdminPassword))
+                            & $WinSCPPath "sftp://${AdminUserName}:$plainPassword@$($Route.Address)/" "/rawsettings" "SftpServer=doas /usr/libexec/sftp-server"
                         } else {
                             & $WinSCPPath "sftp://$($Route.Address)"
                         }
@@ -457,7 +459,7 @@ function Start-ADSDiscovery {
         [string]$WinSCPPath,
         [string]$CerHostPath,
         [string]$AdminUserName,
-        [string]$AdminPassword
+        [SecureString]$AdminPassword
     )
     $prevTargetListJSON = ''
     do {
