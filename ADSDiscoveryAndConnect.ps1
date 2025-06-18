@@ -1,8 +1,10 @@
 ﻿<#
 .SYNOPSIS
-    Discover and connect to Beckhoff devices via ADS.
+    Discover Beckhoff devices, via ADS broadcast search and offer connection options.
 .DESCRIPTION
-    This script discovers Beckhoff devices on the network and provides connection options in a modular, testable structure.
+    This script discovers Beckhoff devices on the network and provides connection options such as SSH, RDP, and WinSCP.
+    It uses the TcXaeMgmt PowerShell module to perform ADS route discovery and allows users to connect to devices via various methods.
+    If CERHost.exe is not present when connecting to a CE device, it will automatically download and extract it.
 .PARAMETER TimeoutSeconds
     Timeout for user input in seconds.
 .PARAMETER WinSCPPath
@@ -113,6 +115,94 @@ function Test-CERHostAvailability {
         return $false
     } finally {
         if ($tcpClient) { $tcpClient.Close() }
+    }
+}
+
+function Get-CERHost {
+    [CmdletBinding()]
+    param(
+        [string]$CerHostPath
+    )
+    try {
+        Write-Host "CERHost.exe not found in script directory. Downloading and installing..." -ForegroundColor Yellow
+        Write-Host "This is a one-time download that will be saved to: $CerHostPath" -ForegroundColor Cyan
+        
+        $downloadUrl = "https://infosys.beckhoff.com/content/1033/cx51x0_hw/Resources/5047075211.zip"
+        $tempZipPath = Join-Path $env:TEMP "CERHost.zip"
+        $extractPath = Join-Path $env:TEMP "CERHost_Extract"
+        $targetDir = Split-Path $CerHostPath -Parent
+        
+        # Ensure script directory exists (it should, but just in case)
+        if (!(Test-Path $targetDir)) {
+            New-Item -ItemType Directory -Path $targetDir -Force | Out-Null
+        }
+        
+        # Download the zip file
+        Write-Host "Downloading CERHost from Beckhoff..." -ForegroundColor Green
+        try {
+            # Try using Invoke-WebRequest first (PowerShell 3.0+)
+            Invoke-WebRequest -Uri $downloadUrl -OutFile $tempZipPath -UseBasicParsing
+        } catch {
+            # Fallback to .NET WebClient for older PowerShell versions
+            Write-Verbose "Invoke-WebRequest failed, falling back to WebClient"
+            $webClient = New-Object System.Net.WebClient
+            $webClient.DownloadFile($downloadUrl, $tempZipPath)
+            $webClient.Dispose()
+        }
+        
+        if (!(Test-Path $tempZipPath)) {
+            throw "Failed to download CERHost.zip"
+        }
+        
+        # Extract the zip file
+        Write-Host "Extracting CERHost..." -ForegroundColor Green
+        
+        # Clean up extract directory if it exists
+        if (Test-Path $extractPath) {
+            Remove-Item $extractPath -Recurse -Force
+        }
+        
+        # Extract using .NET compression (PowerShell 5.0+) or Shell.Application (older versions)
+        try {
+            # Try PowerShell 5.0+ method first
+            Add-Type -AssemblyName System.IO.Compression.FileSystem
+            [System.IO.Compression.ZipFile]::ExtractToDirectory($tempZipPath, $extractPath)
+        } catch {
+            # Fallback to Shell.Application for older PowerShell versions
+            Write-Verbose "System.IO.Compression.FileSystem not available, using Shell.Application"
+            $shell = New-Object -ComObject Shell.Application
+            $zip = $shell.NameSpace($tempZipPath)
+            New-Item -ItemType Directory -Path $extractPath -Force | Out-Null
+            $destination = $shell.NameSpace($extractPath)
+            $destination.CopyHere($zip.Items(), 4)
+        }
+        
+        # Find CERHOST.exe in the extracted files
+        $cerHostFiles = Get-ChildItem -Path $extractPath -Filter "CERHOST.exe" -Recurse
+        if ($cerHostFiles.Count -eq 0) {
+            throw "CERHOST.exe not found in the downloaded archive"
+        }
+        
+        # Copy CERHOST.exe to the target location
+        $sourceCerHost = $cerHostFiles[0].FullName
+        Copy-Item $sourceCerHost $CerHostPath -Force
+        
+        # Clean up temporary files
+        Remove-Item $tempZipPath -Force -ErrorAction SilentlyContinue
+        Remove-Item $extractPath -Recurse -Force -ErrorAction SilentlyContinue
+        
+        Write-Host "CERHost.exe successfully downloaded and permanently installed to: $CerHostPath" -ForegroundColor Green
+        Write-Host "Future CE device connections will use this local copy." -ForegroundColor Green
+        return $true
+        
+    } catch {
+        Write-Error "Failed to download/extract CERHost: $_"
+        
+        # Clean up on failure
+        Remove-Item $tempZipPath -Force -ErrorAction SilentlyContinue
+        Remove-Item $extractPath -Recurse -Force -ErrorAction SilentlyContinue
+        
+        return $false
     }
 }
 
@@ -313,10 +403,22 @@ smart sizing:i:1
                     }
                     Start-Process powershell.exe -ArgumentList '-NoExit','-Command',$sshCommand
                 } elseif ($Route.RTSystem -match "CE") {
+                    # Check if CERHost exists in script directory, if not download it once
+                    if (!(Test-Path $CerHostPath)) {
+                        Write-Host "CERHost.exe not found in script directory. Downloading for first-time use..." -ForegroundColor Yellow
+                        $downloadResult = Get-CERHost -CerHostPath $CerHostPath
+                        if (!$downloadResult) {
+                            Write-Warning "Failed to download CERHost.exe. Cannot establish CE connection."
+                            return
+                        }
+                    }
+                    
+                    # Start CERHost using the local copy
                     if (Test-Path $CerHostPath) {
+                        Write-Host "Starting CERHost from: $CerHostPath" -ForegroundColor Green
                         Start-Process -FilePath $CerHostPath -ArgumentList $Route.Address
                     } else {
-                        Write-Warning "CERHOST.exe not found at $CerHostPath"
+                        Write-Warning "CERHOST.exe still not found at $CerHostPath after download attempt."
                     }
                 }
             }
