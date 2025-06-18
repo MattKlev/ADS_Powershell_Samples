@@ -30,8 +30,6 @@ param(
     [string]$AdminPassword = "1"
 )
 
-Write-Verbose "PowerShell Version: $($PSVersionTable.PSVersion)"
-
 function Read-InputWithTimeout {
     [CmdletBinding()]
     param(
